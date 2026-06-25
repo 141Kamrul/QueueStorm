@@ -7,10 +7,16 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": {
+      // The API base may be empty (relative paths) or a full URL
+      // (VITE_API_BASE set to a deployed backend). When VITE_API_BASE
+      // is empty we proxy API calls to the local FastAPI server.
+      "/sort-ticket": {
         target: "http://localhost:8000",
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, ""),
+      },
+      "/health": {
+        target: "http://localhost:8000",
+        changeOrigin: true,
       },
     },
   },
