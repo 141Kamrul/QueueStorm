@@ -7,13 +7,27 @@ It reads a customer support message and returns a structured
 classification (case type, severity, department, agent summary,
 human-review flag, confidence) over HTTPS.
 
+## Live Deployment
+
+| Resource          | URL                                              |
+| ----------------- | ------------------------------------------------ |
+| **Frontend (UI)** | <https://queue-storm-7vjq.vercel.app>            |
+| **Backend API**   | <https://queue-storm-7vjq.vercel.app>            |
+| `GET  /health`    | <https://queue-storm-7vjq.vercel.app/health>     |
+| `POST /sort-ticket` | <https://queue-storm-7vjq.vercel.app/sort-ticket> |
+
+The FastAPI backend and the React dashboard are both served from the
+same origin at `https://queue-storm-7vjq.vercel.app`. The frontend
+reads `VITE_API_BASE` from `App/frontend/.env` and points at this host
+at build time.
+
 ## Stack
 
 | Layer    | Tech                                             |
 | -------- | ------------------------------------------------ |
 | Backend  | Python 3.11+ · FastAPI · Pydantic · pytest      |
 | Frontend | Vite · React 18 · TypeScript · Tailwind CSS      |
-| Hosting  | Single service (Render / Railway / Fly) — FastAPI serves both API and built frontend |
+| Hosting  | Vercel (single HTTPS endpoint serves both API and built frontend) |
 
 The classification is **rules-based** (no LLM required, no API key, no
 GPU dependency).
@@ -35,6 +49,8 @@ App/
 │   └── README.md
 ├── frontend/                Vite + React + TS + Tailwind UI
 │   ├── src/
+│   ├── .env                 VITE_API_BASE → deployed backend URL
+│   ├── .env.example         template (safe to commit)
 │   ├── package.json
 │   └── README.md
 ├── docker-compose.yml       Optional: spin up backend in a container
@@ -45,7 +61,9 @@ App/
 
 ### `GET /health`
 
-Returns service liveness.
+```bash
+curl https://queue-storm-7vjq.vercel.app/health
+```
 
 ```json
 { "status": "ok", "service": "queuestorm-warmup" }
@@ -53,15 +71,15 @@ Returns service liveness.
 
 ### `POST /sort-ticket`
 
-Request:
-
-```json
-{
-  "ticket_id": "T-001",
-  "channel": "app",
-  "locale": "en",
-  "message": "I sent 3000 taka to wrong number this morning, please help"
-}
+```bash
+curl -X POST https://queue-storm-7vjq.vercel.app/sort-ticket \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "ticket_id": "T-001",
+    "channel": "app",
+    "locale": "en",
+    "message": "I sent 3000 taka to wrong number this morning, please help"
+  }'
 ```
 
 Response:
@@ -74,7 +92,7 @@ Response:
   "department": "dispute_resolution",
   "agent_summary": "Customer reports sending 3000 taka to the wrong recipient and asks for help recovering the funds.",
   "human_review_required": false,
-  "confidence": 0.85
+  "confidence": 0.65
 }
 ```
 
@@ -92,10 +110,9 @@ uvicorn app.main:app --reload --port 8000
 
 - http://localhost:8000/health
 - http://localhost:8000/docs (Swagger UI)
+- http://localhost:8000/sort-ticket (POST)
 
-### Frontend (dev mode)
-
-In another terminal:
+### Frontend (dev mode — talks to local backend)
 
 ```bash
 cd App/frontend
@@ -103,10 +120,21 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173. Vite proxies `/api/*` to the backend on
-`:8000`.
+Open http://localhost:5173. With no `VITE_API_BASE` set, Vite proxies
+`/sort-ticket` and `/health` to `http://localhost:8000`.
 
-### Frontend (production build, served by FastAPI)
+### Frontend (dev mode — talks to the live Vercel backend)
+
+```bash
+cd App/frontend
+npm install
+# .env already contains VITE_API_BASE=https://queue-storm-7vjq.vercel.app
+npm run dev
+```
+
+The dev UI will POST directly to the Vercel deployment.
+
+### Frontend (production build, served by FastAPI on a single host)
 
 ```bash
 cd App/frontend
@@ -118,6 +146,14 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 Now visit http://localhost:8000 — the React app loads from FastAPI
 and `/health` and `/sort-ticket` are available on the same origin.
+This is exactly how the Vercel deployment is configured.
+
+### Frontend (production build deployed to a static host)
+
+Build the bundle (`npm run build`) and upload `App/frontend/dist/`.
+The bundle has `VITE_API_BASE` baked in from `.env`, so it will call
+the configured backend host. To repoint, edit `App/frontend/.env`
+and rebuild.
 
 ## Run Tests
 
@@ -140,6 +176,23 @@ messages, and edge cases.
 | 4 | "Please refund my last transaction, I changed my mind"   | `refund_request`                            | low      |
 | 5 | "App crashed when I opened it"                           | `other`                                     | low      |
 
+## Environment Variables
+
+### Frontend (`App/frontend/.env`)
+
+| Var              | Purpose                                                                 |
+| ---------------- | ----------------------------------------------------------------------- |
+| `VITE_API_BASE`  | Backend origin inlined at build time. Default: `https://queue-storm-7vjq.vercel.app`. Trailing slashes are stripped. |
+
+`.env` is git-ignored; `.env.example` is the safe-to-commit template.
+
+### Backend (`.env` or platform env vars)
+
+| Var           | Default | Purpose                                  |
+| ------------- | ------- | ---------------------------------------- |
+| `PORT`        | `8000`  | Port for `uvicorn` to bind.              |
+| `CORS_ORIGINS`| `*`     | Comma-separated origins or `*` for all.  |
+
 ## Safety
 
 The grader will auto-fail any response whose `agent_summary` asks the
@@ -153,11 +206,9 @@ We defend against this in two layers:
    response and strips any imperative "share/send/give/verify your X"
    phrasing, replacing it with a neutral safety line.
 
-## Deployment
+## Deployment (Vercel)
 
-A single service that hosts both API and UI is the simplest path:
-
-**Render / Railway / Fly** — set:
+**Live URL:** <https://queue-storm-7vjq.vercel.app>
 
 - **Build command:**
   ```bash
@@ -167,14 +218,14 @@ A single service that hosts both API and UI is the simplest path:
   ```bash
   cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
   ```
-- **Environment variables:** none required (optional: `CORS_ORIGINS`).
+- **Environment variables:** none required on the backend (optional: `CORS_ORIGINS`).
+  The frontend `VITE_API_BASE` is baked in at build time from `App/frontend/.env`.
 
-HTTPS is handled by the platform automatically. The resulting URL like
-`https://queuestorm-warmup.onrender.com` exposes:
+HTTPS is handled by Vercel automatically. The single URL exposes:
 
-- `GET  /health`
-- `POST /sort-ticket`
-- `GET  /` (the React dashboard)
+- `GET  /health`           — health probe
+- `POST /sort-ticket`      — classification endpoint
+- `GET  /`                 — React dashboard
 
 ## LLM Usage
 
